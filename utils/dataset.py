@@ -9,19 +9,16 @@ import os
 from tqdm import tqdm
 import numpy as np
 
-if __name__ == "__main__":
-    from general import check_file, xyxy2xywh, xywh2xyxy
-    from plot import plot_one_box
-else:
-    from utils.general import check_file, xyxy2xywh
-    from utils.plot import plot_one_box
+
+from utils.general import check_file, xyxy2xywh, xywh2xyxy
+from utils.plot import plot_one_box
 
 
-def create_dataset(path, img_size=640, batch_size=8, cache_image=False):
+def create_dataset(path, img_size=640, batch_size=8):
     """
     we need to define the img_size because the we need stack when use batch, but the image may have the different size
     """
-    dataset = LoadImagesAndLabels(path, img_size=img_size, cache_image=cache_image)
+    dataset = LoadImagesAndLabels(path, img_size=img_size,)
     loader = torch.utils.data.DataLoader
     dataloader = loader(
         dataset, batch_size=batch_size, collate_fn=LoadImagesAndLabels.collate_fn
@@ -34,13 +31,11 @@ class LoadImagesAndLabels(Dataset):
     a subclass of torch.utils.data.Dataset with attribution:
     self.img_files(list): all paths of image files in the path dir.
     self.label_files(list): all paths of label files in the path dir.
-    self.imgs(list): if cache_images is True, then it store the images, else it stores None.
-    self.img_hw0(list): if cache_image is True, store the origin image height and weight, else store None.
-    self.img_hw(list): if cache_image is True, stors the resized image height and weight, else stre None.
-    self.labels(np.array): the scaled xywh format, the x, y is the center coordinate, the w, h is the total length 
     """
 
-    def __init__(self, path, img_size=640, cache_image=False):
+    def __init__(
+        self, path, img_size=640,
+    ):
         self.img_size = img_size
 
         f = []
@@ -56,14 +51,6 @@ class LoadImagesAndLabels(Dataset):
         # cv2.destroyAllWindows()
         f = []
         self.label_files = img2label_path(self.img_files)
-        cache_path = Path(self.label_files[0]).parent.with_suffix(".cache")
-
-        cache = self.cache_labels(cache_path)
-
-        # read cache
-        cache.pop("hash")
-        labels = list(cache.values())
-        self.labels = labels
 
     def __len__(self):
         return len(self.img_files)
@@ -74,13 +61,15 @@ class LoadImagesAndLabels(Dataset):
             img(tensor) in 640 * 640 * 3 shape
             labels(tensor) in xywh normalized form
         """
-        img, (h0, w0), (h, w) = load_image(self, index)
+        img, (h0, w0), (h, w) = self.load_image(index)
         new_shape = self.img_size
         img, ratio, pad = letterbox(img, new_shape)
         # cv2.imshow(f"image {index}, file name {self.img_files[index]}", img)
         # cv2.waitKey(0)
         # cv2.destroyAllWindows()
-        x = self.labels[index]
+        # x = self.labels[index]
+        # convert pre load the label to the mode that everytime fetch the label, load the label
+        x = self.load_label(index)
         nL = x.shape[0]
         labels_out = torch.zeros((nL, 6))
         label = []
@@ -97,8 +86,8 @@ class LoadImagesAndLabels(Dataset):
             label[:, 4] = label[:, 2] + ratio[1] * label[:, 4] * h
         if nL:
             label[:, 1:5] = xyxy2xywh(label[:, 1:5])
-            label[:, [2, 4]] /= img.shape[1]
-            label[:, [1, 3]] /= img.shape[2]
+            label[:, [2, 4]] /= img.shape[0]
+            label[:, [1, 3]] /= img.shape[1]
             labels_out[:, 1:] = torch.from_numpy(label)
 
         # convert image
@@ -109,27 +98,24 @@ class LoadImagesAndLabels(Dataset):
 
         return torch.from_numpy(img), labels_out
 
-    def cache_labels(self, cache_path):
-        """
-        return:
-            x(dict):map from img_file(str) to labels(np.array)
-        at the mean while, save the x to the cache file
-        """
-        x = {}
-        pbar = tqdm(
-            zip(self.img_files, self.label_files),
-            desc="scan images",
-            total=len(self.img_files),
-        )
-        for i, (img_file, label_file) in enumerate(pbar):
-            with open(label_file, "r") as f:
-                label = np.array(
-                    [x.split() for x in f.read().strip().splitlines()], dtype=np.float32
-                )
-            x[img_file] = label
-        x["hash"] = get_hash(self.img_files + self.label_files)
-        torch.save(x, cache_path)
-        return x
+    def load_image(self, index):
+        path = self.img_files[index]
+        img = cv2.imread(path)
+        assert img is not None, f"Image Not Found {path}"
+        h0, w0 = img.shape[:2]
+        r = self.img_size / max(h0, w0)
+        # if r != 1:
+        #     interp = cv2.INTER_AREA if r < 1 else cv2.INTER_LINEAR
+        #     img = cv2.resize(img, (int(w0 * r), int(h0 * r)), interpolation=interp)
+        return img, (h0, w0), img.shape[:2]
+
+    def load_label(self, index):
+        path = self.label_files[index]
+        with open(path, "r") as f:
+            label = np.array(
+                [x.split() for x in f.read().strip().splitlines()], dtype=np.float32
+            )
+        return label
 
     @staticmethod
     def collate_fn(batch):
@@ -144,18 +130,6 @@ def img2label_path(img_paths):
     return [
         x.replace(sa, sb).replace("." + x.split(".")[-1], ".txt") for x in img_paths
     ]
-
-
-def load_image(self, index):
-    path = self.img_files[index]
-    img = cv2.imread(path)
-    assert img is not None, f"Image Not Found {path}"
-    h0, w0 = img.shape[:2]
-    r = self.img_size / max(h0, w0)
-    # if r != 1:
-    #     interp = cv2.INTER_AREA if r < 1 else cv2.INTER_LINEAR
-    #     img = cv2.resize(img, (int(w0 * r), int(h0 * r)), interpolation=interp)
-    return img, (h0, w0), img.shape[:2]
 
 
 def letterbox(img, new_shape):
@@ -184,49 +158,3 @@ def letterbox(img, new_shape):
         img, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color
     )
     return img, ratio, (dw, dh)
-
-
-def get_hash(files):
-    return sum(os.path.getsize(f) for f in files if os.path.isfile(f))
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--data", type=str, default="data/coco128.yaml", help="data.yaml path"
-    )
-    opt = parser.parse_args()
-    opt.data = check_file(opt.data)
-    with open(opt.data, "r") as f:
-        data_dict = yaml.load(f, Loader=yaml.FullLoader)
-    train_path = data_dict["train"]
-    names = data_dict["names"]
-    print(train_path)
-    dataset, dataloader = create_dataset(train_path, cache_image=False, batch_size=4)
-    # pbar = tqdm(dataloader)
-    for i, (img, labels) in enumerate(dataloader):
-        if i == 0:
-            # print(img.shape)
-            # print(labels.shape)
-            labels = xywh2xyxy(labels, img[0].shape[2], img[0].shape[1])
-            for img_id in range(dataloader.batch_size):
-                draw_img = img[img_id].permute(1, 2, 0).numpy().astype("uint8")
-                draw_img = np.ascontiguousarray(draw_img)
-                j = 0
-                while j < labels.shape[0]:
-                    if labels[j][0] == img_id:
-                        print(f"{names[int(labels[j][1].item())]}")
-                        plot_one_box(
-                            labels[j, 2:6],
-                            draw_img,
-                            label=names[int(labels[j][1].item())],
-                        )
-                    j += 1
-                cv2.imshow(
-                    f"picture {labels[i][0]}", draw_img,
-                )
-                cv2.waitKey(0)
-                cv2.destroyAllWindows()
-        else:
-            break
-
