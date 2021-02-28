@@ -5,7 +5,7 @@ from models.common import Conv, Concat, Bottleneck
 import logging
 
 logger = logging.getLogger(__name__)
-cfg_path = "./network_config.txt"
+# cfg_path = "./network_config.txt"
 
 
 class Detect(nn.Module):
@@ -43,11 +43,8 @@ class Model(nn.Module):
 
     def __init__(self, cfg="models/yolo.yaml", ch=3, nc=None):
         super(Model, self).__init__()
-        if isinstance(cfg, dict):
-            self.yaml = cfg
-        else:
-            with open(cfg, "r") as f:
-                self.yaml = yaml.load(f, Loader=yaml.FullLoader)
+        with open(cfg, "r") as f:
+            self.yaml = yaml.load(f, Loader=yaml.FullLoader)
         self.model, self.save = parse_model(self.yaml, channels=[ch])
 
         m = self.model[-1]
@@ -109,8 +106,8 @@ def parse_model(yaml_dict, channels):
         optput_channels_per_layer.append(c2)
         param_num = sum(x.numel() for x in m_.parameters())
         t = str(m)[8:-2].replace("__main__.", "")
-        with open(cfg_path, "a") as file:
-            file.write("%3s%18s%10.0f  %-40s%-30s\n" % (i, f, param_num, t, args))
+        # with open(cfg_path, "a") as file:
+        #     file.write("%3s%18s%10.0f  %-40s%-30s\n" % (i, f, param_num, t, args))
     return nn.Sequential(*layers), sorted(save)
 
 

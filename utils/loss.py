@@ -11,7 +11,7 @@ def smooth_BCE(eps=0.1):
     return 1.0 - 0.5 * eps, 0.5 * eps
 
 
-def compute_loss(preds, targets, model, images, names):
+def compute_loss(preds, targets, model):
     # targets in normalized xywh form
     lbox, lcls, lobj = torch.tensor(0.0), torch.tensor(0.0), torch.tensor(0.0)
     tcls, tbox, indices, anchors = build_targets(preds, targets, model)
@@ -33,41 +33,18 @@ def compute_loss(preds, targets, model, images, names):
             pxy = pred_sub[:, :2].sigmoid() * 2 - 0.5
             pwh = (pred_sub[:, 2:4].sigmoid()) ** 2 * anchors[i]
 
-            # show the prediction
-            print("start plotting!!!")
-            images = [
-                np.ascontiguousarray(image.permute(1, 2, 0).numpy().astype("uint8"))
-                for image in images
-            ]
-            if i == 0:
-                n = 0
-                while n < img.shape[0]:
-                    img_idx = img[n].item()
-                    x1y1 = (pxy[n] - pwh[n] / 2) * images[img_idx].shape[1]
-                    x2y2 = (pxy[n] + pwh[n] / 2) * images[img_idx].shape[1]
-                    x = [x1y1[0], x1y1[1], x2y2[0], x2y2[1]]
-                    plot_one_box(x, images[img_idx], names[tcls[i][n].item()])
-                    n += 1
-                for j in range(img.shape[0]):
-                    print("ready to print image")
-                    cv2.imshow(f"image {j}.png", images[j])
-                    cv2.waitKey(0)
-                    cv2.destroyAllWindows()
-            print("plot over!!!")
-
             pbox = torch.cat((pxy, pwh), 1)
             iou = bbox_iou(pbox.T, tbox[i], x1y1x2y2=False)
             lbox += (1 - iou).mean()
 
             # classification
-            if model.class_num > 1:
-                t = torch.full_like(pred_sub[:, 5:], cn)
-                t[range(n), tcls[i]] = cp
-                # don't make sense here
-                lcls += BCEcls(pred_sub[:, 5:], t)
+            t = torch.full_like(pred_sub[:, 5:], cn)
+            t[range(n), tcls[i]] = cp
+            # don't make sense here
+            lcls += BCEcls(pred_sub[:, 5:], t)
 
             # objectness ???
-            tobj[img, a, gj, gi] = (1.0 - model.gr) + model.gr * iou.detach().clamp(0)
+            tobj[img, a, gj, gi] = 1
         # no question here because the logits only work on pred, doesn't work on targets
         lobj += balance[i] * BCEobj(preds_i[..., 4], tobj)
 

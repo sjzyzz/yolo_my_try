@@ -130,3 +130,5 @@ dmypy.json
 
 # ignore the file end with '~'
 *~
+# ignore the runs/ dir
+runs/
