@@ -18,16 +18,17 @@ def train(opt, device):
     read the data
     for every epoch, iterate the dataset and do the backpropagation
     """
-    with open(opt.data, "f") as f:
+    with open(opt.data, "r") as f:
         data_dict = yaml.load(f, Loader=yaml.FullLoader)
     train_path = data_dict["train"]
-    img_size = opt.img_size
+    # img_size = opt.img_size
     batch_size = opt.batch_size
-    dataset, dataloader = create_dataset(train_path, img_size, batch_size)
+    dataset, dataloader = create_dataset(train_path, batch_size=batch_size)
     model = Model().to(device)
     optimizer = optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
     max_epoch = 300
     for epoch in range(max_epoch):
+        print(f"Epoch {epoch}:")
         for i, (imgs, targets) in enumerate(dataloader):
             # write some image grids via tensorboard
             # img_gird = torchvision.utils.make_grid(imgs)
@@ -38,15 +39,15 @@ def train(opt, device):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            # print(f"In batch{i} of epoch {epoch}, the loss is {loss}")
-            writter.add_scalar("training loss", loss, epoch * len(dataloader) + i)
+            print(f"    the loss in batch {i} is {loss}")
+            # writter.add_scalar("training loss", loss, epoch * len(dataloader) + i)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", type=str, default="data/coco128.yaml")
     parser.add_argument("--device", default="")
-    parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--batch-size", type=int, default=8)
     opt = parser.parse_args()
 
     device = select_device(opt.device, opt.batch_size)

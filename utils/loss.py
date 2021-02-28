@@ -13,7 +13,11 @@ def smooth_BCE(eps=0.1):
 
 def compute_loss(preds, targets, model):
     # targets in normalized xywh form
-    lbox, lcls, lobj = torch.tensor(0.0), torch.tensor(0.0), torch.tensor(0.0)
+    lbox, lcls, lobj = (
+        torch.tensor(0.0).to(targets.device),
+        torch.tensor(0.0).to(targets.device),
+        torch.tensor(0.0).to(targets.device),
+    )
     tcls, tbox, indices, anchors = build_targets(preds, targets, model)
 
     cp, cn = smooth_BCE()
@@ -25,7 +29,7 @@ def compute_loss(preds, targets, model):
         img, a, gj, gi = indices[i]
         n = img.shape[0]
 
-        tobj = torch.zeros_like(preds_i[..., 0])
+        tobj = torch.zeros_like(preds_i[..., 0]).to(targets.device)
         if n:
             pred_sub = preds_i[img, a, gj, gi]
 
@@ -71,13 +75,18 @@ def build_targets(preds, targets, model):
     detect = model.model[-1]
     anchor_num = detect.anchor_num
     target_num = targets.shape[0]
-    anchor_index = torch.arange(anchor_num).view(anchor_num, 1).repeat(1, target_num)
+    anchor_index = (
+        torch.arange(anchor_num)
+        .view(anchor_num, 1)
+        .repeat(1, target_num)
+        .to(targets.device)
+    )
     targets = torch.cat(
         (targets.repeat(anchor_num, 1, 1), anchor_index[:, :, None]), -1
     )
-    gain = torch.ones(7)
+    gain = torch.ones(7).to(targets.device)
     for i in range(detect.layer_num):
-        anchors = detect.anchors[i].view(-1, 2)
+        anchors = detect.anchors[i].view(-1, 2).to(targets.device)
         gain[2:6] = torch.tensor(preds[i].shape)[[3, 2, 3, 2]]  # nx, ny, nx, ny
         t = targets * gain
         if target_num:
