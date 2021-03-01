@@ -12,10 +12,8 @@ from utils.dataset import create_dataset
 from utils.torch_utils import select_device
 from models.yolo import Model
 
-writter = SummaryWriter("runs/train")
 
-
-def train(opt, device):
+def train(opt, device, tb_writer=None):
     """
     read the data
     for every epoch, iterate the dataset and do the backpropagation
@@ -110,4 +108,5 @@ if __name__ == "__main__":
             Path(opt.project) / opt.name, exist_ok=opt.exist_ok
         )
     device = select_device(opt.device, opt.batch_size)
-    train(opt, device=device)
+    tb_writer = SummaryWriter(opt.save_dir)
+    train(opt, device=device, tb_writer=tb_writer)
