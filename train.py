@@ -1,4 +1,5 @@
 import torch
+from pathlib import Path
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 import torchvision
@@ -6,6 +7,7 @@ import argparse
 import yaml
 
 from utils.loss import compute_loss
+from utils.general import increment_path
 from utils.dataset import create_dataset
 from utils.torch_utils import select_device
 from models.yolo import Model
@@ -21,14 +23,21 @@ def train(opt, device):
     with open(opt.data, "r") as f:
         data_dict = yaml.load(f, Loader=yaml.FullLoader)
     train_path = data_dict["train"]
+    save_dir = Path(opt.save_dir)
+    wdir = save_dir / "weights"
+    wdir.mkdir(parents=True, exist_ok=True)
+    last = wdir / "last.pt"
+    best = wdir / "best.pt"
     # img_size = opt.img_size
     batch_size = opt.batch_size
     dataset, dataloader = create_dataset(train_path, batch_size=batch_size)
     model = Model().to(device)
     optimizer = optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
     max_epoch = 300
+    best_loss = -1.0
     for epoch in range(max_epoch):
         print(f"Epoch {epoch}:")
+        epoch_loss = 0.0
         for i, (imgs, targets) in enumerate(dataloader):
             # write some image grids via tensorboard
             # img_gird = torchvision.utils.make_grid(imgs)
@@ -40,7 +49,18 @@ def train(opt, device):
             loss.backward()
             optimizer.step()
             print(f"    the loss in batch {i} is {loss}")
+            epoch_loss += loss.item()
             # writter.add_scalar("training loss", loss, epoch * len(dataloader) + i)
+        # save the checkpoint
+        if not opt.nosave:
+            save_dict = {
+                "epoch": epoch,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+            }
+            torch.save(save_dict, last)
+            if best_loss == -1 or epoch_loss < best_loss:
+                torch.save(save_dict, best)
 
 
 if __name__ == "__main__":
@@ -48,7 +68,18 @@ if __name__ == "__main__":
     parser.add_argument("--data", type=str, default="data/coco128.yaml")
     parser.add_argument("--device", default="")
     parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument(
+        "--nosave", action="store_true", help="decide save the parameter or not"
+    )
+    parser.add_argument("--project", default="runs/train")
+    parser.add_argument("--name", default="exp")
+    parser.add_argument(
+        "--exist-ok",
+        action="store_true",
+        help="existing project/name is ok, which means there is only one exp directory in the runs/train directory",
+    )
     opt = parser.parse_args()
 
+    opt.save_dir = increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok)
     device = select_device(opt.device, opt.batch_size)
     train(opt, device=device)
