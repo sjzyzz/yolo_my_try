@@ -7,7 +7,7 @@ import argparse
 import yaml
 
 from utils.loss import compute_loss
-from utils.general import increment_path
+from utils.general import increment_path, get_latest_run
 from utils.dataset import create_dataset
 from utils.torch_utils import select_device
 from models.yolo import Model
@@ -28,14 +28,25 @@ def train(opt, device):
     wdir.mkdir(parents=True, exist_ok=True)
     last = wdir / "last.pt"
     best = wdir / "best.pt"
+
+    # save run settings
+    with open(save_dir / "opt.yaml", "w") as f:
+        yaml.dump(vars(opt), f, sort_keys=False)
     # img_size = opt.img_size
     batch_size = opt.batch_size
     dataset, dataloader = create_dataset(train_path, batch_size=batch_size)
     model = Model().to(device)
     optimizer = optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
-    max_epoch = 300
+    start_epoch = 0
     best_loss = -1.0
-    for epoch in range(max_epoch):
+    max_epoch = 300
+    if opt.resume:
+        ckpt = torch.load(opt.weights)
+        best_loss = ckpt["best_loss"]
+        start_epoch = ckpt["epoch"] + 1
+        model.load_state_dict(ckpt["model_state_dict"])
+        optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+    for epoch in range(start_epoch, max_epoch):
         print(f"Epoch {epoch}:")
         epoch_loss = 0.0
         for i, (imgs, targets) in enumerate(dataloader):
@@ -55,12 +66,14 @@ def train(opt, device):
         if not opt.nosave:
             save_dict = {
                 "epoch": epoch,
+                "best_loss": best_loss,
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
             }
             torch.save(save_dict, last)
             if best_loss == -1 or epoch_loss < best_loss:
                 torch.save(save_dict, best)
+                best_loss = epoch_loss
 
 
 if __name__ == "__main__":
@@ -78,8 +91,23 @@ if __name__ == "__main__":
         action="store_true",
         help="existing project/name is ok, which means there is only one exp directory in the runs/train directory",
     )
+    parser.add_argument(
+        "--resume",
+        nargs="?",
+        const=True,
+        default=False,
+        help="resume the most recent train",
+    )  # if the --resume appear in the command but no argument follows, the const value(True) will be assign, if the --resume does not appear in the command, the default value(False) will be assign------the function of "nargs=?"
     opt = parser.parse_args()
 
-    opt.save_dir = increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok)
+    if opt.resume:
+        ckpt = get_latest_run()
+        with open(Path(ckpt).parent.parent / "opt.yaml", "r") as f:
+            opt = argparse.Namespace(**yaml.load(f, Loader=yaml.FullLoader))
+        opt.resume, opt.weights = True, ckpt
+    else:
+        opt.save_dir = increment_path(
+            Path(opt.project) / opt.name, exist_ok=opt.exist_ok
+        )
     device = select_device(opt.device, opt.batch_size)
     train(opt, device=device)
