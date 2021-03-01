@@ -132,3 +132,5 @@ dmypy.json
 *~
 # ignore the runs/ dir
 runs/
+# ignore the .vscode/ dir
+.vscode/
