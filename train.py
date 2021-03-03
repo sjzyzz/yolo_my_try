@@ -62,6 +62,9 @@ def train(opt, device, tb_writer=None):
             # writter.add_scalar("training loss", loss, epoch * len(dataloader) + i)
         # save the checkpoint
         if not opt.nosave:
+            if best_loss == -1 or epoch_loss < best_loss:
+                torch.save(save_dict, best)
+                best_loss = epoch_loss
             save_dict = {
                 "epoch": epoch,
                 "best_loss": best_loss,
@@ -69,9 +72,6 @@ def train(opt, device, tb_writer=None):
                 "optimizer_state_dict": optimizer.state_dict(),
             }
             torch.save(save_dict, last)
-            if best_loss == -1 or epoch_loss < best_loss:
-                torch.save(save_dict, best)
-                best_loss = epoch_loss
 
 
 if __name__ == "__main__":
