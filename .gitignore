@@ -134,3 +134,5 @@ dmypy.json
 runs/
 # ignore the .vscode/ dir
 .vscode/
+# ignore the path file
+*.pt
