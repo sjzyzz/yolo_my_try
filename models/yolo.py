@@ -1,11 +1,11 @@
 import torch
+import logging
 import torch.nn as nn
 import yaml
 from models.common import Conv, Concat, Bottleneck
 import logging
 
-logger = logging.getLogger(__name__)
-# cfg_path = "./network_config.txt"
+# logging.basicConfig(filename="find_error_of_detect_forward.log", level=logging.DEBUG)
 
 
 class Detect(nn.Module):
@@ -69,8 +69,13 @@ class Model(nn.Module):
                     if isinstance(m.f, int)
                     else [x if j == -1 else y[j] for j in m.f]
                 )
+            # logging.debug(f"the module {type(m).__name__}:")
+            # shape_before = [y.shape for y in x] if isinstance(x, list) else x.shape
+            # logging.debug(f"    input shape: {shape_before}")
             x = m(x)
-            y.append(x if m.i in self.save else None)
+            # shape_after = [y.shape for y in x] if isinstance(x, list) else x.shape
+            # logging.debug(f"    output shape: {shape_after}\n")
+            # y.append(x if m.i in self.save else None)
 
         return x
 

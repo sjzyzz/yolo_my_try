@@ -45,6 +45,7 @@ def train(opt, device, tb_writer=None):
         model.load_state_dict(ckpt["model_state_dict"])
         optimizer.load_state_dict(ckpt["optimizer_state_dict"])
     for epoch in range(start_epoch, max_epoch):
+        model.train()
         print(f"Epoch {epoch}:")
         epoch_loss = 0.0
         for i, (imgs, targets) in enumerate(dataloader):
@@ -63,7 +64,6 @@ def train(opt, device, tb_writer=None):
         # save the checkpoint
         if not opt.nosave:
             if best_loss == -1 or epoch_loss < best_loss:
-                torch.save(save_dict, best)
                 best_loss = epoch_loss
             save_dict = {
                 "epoch": epoch,
@@ -72,6 +72,8 @@ def train(opt, device, tb_writer=None):
                 "optimizer_state_dict": optimizer.state_dict(),
             }
             torch.save(save_dict, last)
+            if best_loss == epoch_loss:
+                torch.save(save_dict, best)
 
 
 if __name__ == "__main__":

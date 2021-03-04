@@ -2,6 +2,7 @@ import torch
 import argparse
 import cv2
 from models.yolo import Model
+from utils.dataset import create_dataset, LoadImages
 
 
 def detect(opt):
@@ -11,9 +12,12 @@ def detect(opt):
         opt.save_img,
         opt.view_img,
     )
-    img = cv2.imread(source)
     model = Model()
     ckpt = torch.load(weights)
+    model.load_state_dict(ckpt["model_state_dict"])
+    images = LoadImages(source)
+    for i, img in enumerate(images):
+        pred = model(img[None, ...])
 
 
 if __name__ == "__main__":
@@ -24,7 +28,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--weights",
         type=str,
-        default="yolov3.pt",
+        default="best.pt",
         help="the path of weight to be loaded",
     )
     parser.add_argument("--project", type=str, default="runs/detect")

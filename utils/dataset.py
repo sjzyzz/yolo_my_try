@@ -14,6 +14,33 @@ from utils.general import check_file, xyxy2xywh, xywh2xyxy
 from utils.plot import plot_one_box
 
 
+class LoadImages:
+    def __init__(self, path, img_size=640):
+        p = str(Path(path))
+        # p = os.path.abspath(path)
+        self.files = glob.glob(os.path.join(p, "*.jpg"))
+        self.img_size = img_size
+        self.n = len(self.files)
+
+    def __iter__(self):
+        self.count = 0
+        return self
+
+    def __next__(self):
+        if self.count < self.n:
+            file = self.files[self.count]
+            self.count += 1
+        else:
+            raise StopIteration
+
+        img = cv2.imread(file)
+        img = letterbox(img, self.img_size)[0]
+        img = img.transpose(2, 0, 1)
+        img = img.astype("float32")
+        img = np.ascontiguousarray(img)
+        return torch.from_numpy(img)
+
+
 def create_dataset(path, img_size=640, batch_size=8):
     """
     we need to define the img_size because the we need stack when use batch, but the image may have the different size
