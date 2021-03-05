@@ -25,6 +25,7 @@ class Detect(nn.Module):
         )
 
     def forward(self, x):
+        z = []
         for i in range(self.layer_num):
             x[i] = self.m[i](x[i])
             bs, _, ny, nx = x[i].shape
@@ -33,6 +34,11 @@ class Detect(nn.Module):
                 .view(bs, self.anchor_num, self.output_num, ny, nx)
                 .permute(0, 1, 3, 4, 2)
             )
+            if not self.training:
+                y = x[i].sigmoid()
+                y[..., 0:2] = y[..., 0:2]  # need add the location of the gird
+                y[..., 2:4] = y[..., 2:4] ** 2  # need to multiple the wh of anchor
+                z.append(y.view(bs, -1, self.output_num))
         return x
 
 
@@ -75,7 +81,7 @@ class Model(nn.Module):
             x = m(x)
             # shape_after = [y.shape for y in x] if isinstance(x, list) else x.shape
             # logging.debug(f"    output shape: {shape_after}\n")
-            # y.append(x if m.i in self.save else None)
+            y.append(x if m.i in self.save else None)
 
         return x
 

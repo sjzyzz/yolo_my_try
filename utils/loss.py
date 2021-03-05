@@ -34,7 +34,7 @@ def compute_loss(preds, targets, model):
             pred_sub = preds_i[img, a, gj, gi]
 
             # bounding box
-            pxy = pred_sub[:, :2].sigmoid() * 2 - 0.5
+            pxy = pred_sub[:, :2].sigmoid()
             pwh = (pred_sub[:, 2:4].sigmoid()) ** 2 * anchors[i]
 
             pbox = torch.cat((pxy, pwh), 1)
@@ -102,9 +102,10 @@ def build_targets(preds, targets, model):
         gwh = t[:, 4:6]
         a = t[:, 6].long()
         gij = gxy.long()
+        offset = gxy - gij
         gi, gj = gij.T
         indices.append((img, a, gj, gi))
         tcls.append(c)
-        tbox.append(t[:, 2:6])
+        tbox.append(torch.cat((offset, gwh), 1))
         anch.append(anchors[a])
     return tcls, tbox, indices, anch

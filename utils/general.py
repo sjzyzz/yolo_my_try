@@ -143,3 +143,8 @@ def init_seed(seed=0):
     np.random.seed(seed)
     init_torch_seeds(seed)
 
+
+def non_max_suppression(prediction, conf_thres, iou_thres):
+    xc = prediction[..., 4] > conf_thres
+    prediction = prediction[xc]
+    return prediction

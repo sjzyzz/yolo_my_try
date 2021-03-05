@@ -44,23 +44,30 @@ def train(opt, device, tb_writer=None):
         start_epoch = ckpt["epoch"] + 1
         model.load_state_dict(ckpt["model_state_dict"])
         optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+    running_loss = 0.0
     for epoch in range(start_epoch, max_epoch):
         model.train()
-        print(f"Epoch {epoch}:")
+        # print(f"Epoch {epoch}:")
         epoch_loss = 0.0
         for i, (imgs, targets) in enumerate(dataloader):
             # write some image grids via tensorboard
             # img_gird = torchvision.utils.make_grid(imgs)
-            # writter.add_image(f"16 images in the batch{i}", img_gird)
+            # writer.add_image(f"16 images in the batch{i}", img_gird)
 
             preds = model(imgs.to(device))
             loss = compute_loss(preds, targets.to(device), model)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            print(f"    the loss in batch {i} is {loss}")
+            # print(f"    the loss in batch {i} is {loss}")
             epoch_loss += loss.item()
-            # writter.add_scalar("training loss", loss, epoch * len(dataloader) + i)
+            # writer.add_scalar("training loss", loss, epoch * len(dataloader) + i)
+            running_loss += loss.item()
+            if i % 4 == 3:
+                tb_writer.add_scalar(
+                    "training loss", running_loss, epoch * len(dataloader) + i
+                )
+                running_loss = 0
         # save the checkpoint
         if not opt.nosave:
             if best_loss == -1 or epoch_loss < best_loss:
@@ -111,4 +118,5 @@ if __name__ == "__main__":
         )
     device = select_device(opt.device, opt.batch_size)
     tb_writer = SummaryWriter(opt.save_dir)
+    print(opt)
     train(opt, device=device, tb_writer=tb_writer)
