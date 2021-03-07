@@ -19,9 +19,10 @@ def detect(opt):
     model = Model()
     ckpt = torch.load(weights)
     model.load_state_dict(ckpt["model_state_dict"])
+    model.eval()
     images = LoadImages(source)
     for img in images:
-        pred = model(img)[0]
+        pred = model(img[None, ...])[0]
         pred = non_max_suppression(pred, conf_thres, iou_thres)
         for i, det in enumerate(pred):
             if save_img:

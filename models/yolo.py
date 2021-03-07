@@ -13,13 +13,20 @@ class Detect(nn.Module):
     get the input and output the corresponding dectection output which is some bs * anchor number * S * S * output per anchor tensor
     """
 
+    stride = None
+
     def __init__(self, nc=80, anchors=(), input_channels=()):
         super(Detect, self).__init__()
         self.layer_num = len(input_channels)
         self.anchor_num = len(anchors[0]) // 2
         self.output_num = nc + 5
-        self.anchors = anchors
+        a = torch.tensor(anchors).float().view(self.layer_num, -1, 2)
+        self.register_buffer("anchors", a)
+        self.register_buffer(
+            "anchor_grid", a.clone().view(self.layer_num, self.anchor_num, 1, 1, 2)
+        )
         self.nc = nc
+        self.grid = [torch.zeros(1)] * self.layer_num
         self.m = nn.ModuleList(
             Conv(x, self.output_num * self.anchor_num, 1) for x in input_channels
         )
@@ -35,11 +42,20 @@ class Detect(nn.Module):
                 .permute(0, 1, 3, 4, 2)
             )
             if not self.training:
+                if self.grid[i].shape[0:2] != x[i].shape[2:4]:
+                    self.grid[i] = self._make_grid(nx, ny)
                 y = x[i].sigmoid()
-                y[..., 0:2] = y[..., 0:2]  # need add the location of the gird
-                y[..., 2:4] = y[..., 2:4] ** 2  # need to multiple the wh of anchor
-                z.append(y.view(bs, -1, self.output_num))
+                y[..., 0:2] = (y[..., 0:2] + self.grid[i]) * self.stride[i]
+                y[..., 2:4] = (
+                    y[..., 2:4] ** 2 * self.anchor_grid[i]
+                )  # need to multiple the wh of anchor
+                z.append(y.contiguous().view(bs, -1, self.output_num))
         return x
+
+    @staticmethod
+    def _make_grid(nx, ny):
+        yv, xv = torch.meshgrid(torch.arange(ny), torch.arange(nx))
+        return torch.stack((yv, xv), dim=2)
 
 
 class Model(nn.Module):
