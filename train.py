@@ -59,6 +59,7 @@ def train(opt, device, tb_writer=None):
             # writer.add_image(f"16 images in the batch{i}", img_gird)
 
             preds = model(imgs.to(device))
+            print(i)
             loss = compute_loss(preds, targets.to(device), model)
             optimizer.zero_grad()
             loss.backward()

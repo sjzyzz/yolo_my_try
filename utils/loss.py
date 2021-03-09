@@ -1,10 +1,10 @@
 import torch
 import torch.nn as nn
-from utils.general import bbox_iou
 import cv2
-from utils.plot import plot_one_box
 import random
 import numpy as np
+from utils.plot import plot_one_box
+from utils.general import bbox_iou
 
 
 def smooth_BCE(eps=0.1):
@@ -58,16 +58,6 @@ def compute_loss(preds, targets, model):
 
 
 def build_targets(preds, targets, model):
-    """
-    build the target for down-stream work
-    args:
-        targets: in xywh format
-    return:
-        each output has one part corresponding to the each detect output layer
-        tcls(list(np.array)): available targets' class of each layer 
-        tbox(list(np.array)): available targets' box of each layer
-        indices(list(np.array)): the other useful part of targets(image, anchor, gridy, gridx)
-    """
     tcls = []
     tbox = []
     indices = []
@@ -94,7 +84,6 @@ def build_targets(preds, targets, model):
             # j = torch.max(r, 1.0 / r).max(2)[0] < model.hyp["anchor_t"]
             j = torch.max(r, 1.0 / r).max(2)[0] < 4
             t = t[j]
-
         else:
             t = targets[0]
         img, c = t[:, :2].T.long()
