@@ -50,7 +50,7 @@ class Detect(nn.Module):
                     y[..., 2:4] ** 2 * self.anchor_grid[i]
                 )  # need to multiple the wh of anchor
                 z.append(y.contiguous().view(bs, -1, self.output_num))
-        return x
+        return x if self.training else z
 
     @staticmethod
     def _make_grid(nx, ny):

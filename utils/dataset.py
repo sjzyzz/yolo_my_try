@@ -6,6 +6,7 @@ from pathlib import Path
 import glob
 import cv2
 import os
+import json
 from tqdm import tqdm
 import numpy as np
 
@@ -33,19 +34,19 @@ class LoadImages:
         else:
             raise StopIteration
 
-        img = cv2.imread(file)
-        img = letterbox(img, self.img_size)[0]
+        img0 = cv2.imread(file)
+        img = letterbox(img0, self.img_size)[0]
         img = img.transpose(2, 0, 1)
         img = img.astype("float32")
         img = np.ascontiguousarray(img)
-        return torch.from_numpy(img)
+        return img0, torch.from_numpy(img)
 
 
-def create_dataset(path, img_size=640, batch_size=8):
+def create_dataset(image_base_path, annotation_path, img_size=640, batch_size=8):
     """
     we need to define the img_size because the we need stack when use batch, but the image may have the different size
     """
-    dataset = LoadImagesAndLabels(path, img_size=img_size,)
+    dataset = LoadImagesAndLabels(image_base_path, annotation_path, img_size=img_size,)
     loader = torch.utils.data.DataLoader
     dataloader = loader(
         dataset, batch_size=batch_size, collate_fn=LoadImagesAndLabels.collate_fn
@@ -54,33 +55,37 @@ def create_dataset(path, img_size=640, batch_size=8):
 
 
 class LoadImagesAndLabels(Dataset):
-    """
-    a subclass of torch.utils.data.Dataset with attribution:
-    self.img_files(list): all paths of image files in the path dir.
-    self.label_files(list): all paths of label files in the path dir.
-    """
-
     def __init__(
-        self, path, img_size=640,
+        self, image_base_path, annotation_path, img_size=640,
     ):
         self.img_size = img_size
+        self.image_base_path = image_base_path
 
-        f = []
-        p = Path(path)
-        if p.is_dir():
-            f += glob.glob(str(p / "*.*"), recursive=True)
-        else:
-            pass
-        self.img_files = sorted(f)
-        # img = cv2.imread(self.img_files[0], 3)
-        # cv2.imshow("test image", img)
-        # cv2.waitKey(0)
-        # cv2.destroyAllWindows()
-        f = []
-        self.label_files = img2label_path(self.img_files)
+        with open(annotation_path, "r") as f:
+            data_dict = json.load(f)
+        annotations = data_dict["annotations"]
+        image_id_set = set()
+        annotation_dict = {}
+        image_path_set = set()
+        for annotation in annotations:
+            image_id = annotation["image_id"]
+            image_id_set.add(image_id)
+            image_path_set.add(self.id2path(image_id))
+            if image_id not in annotation_dict:
+                annotation_dict[image_id] = [annotation]
+            else:
+                annotation_dict[image_id].append(annotation)
+
+        self.image_id_list = sorted(list(image_id_set))
+        self.annotation_dict = annotation_dict
+        self.image_path_list = sorted(list(image_path_set))
+
+    def id2path(self, image_id):
+        new_id = str(image_id).zfill(12)
+        return f"{self.image_base_path}/COCO_train2014_{new_id}.jpg"
 
     def __len__(self):
-        return len(self.img_files)
+        return len(self.image_id_list)
 
     def __getitem__(self, index):
         """
@@ -126,9 +131,10 @@ class LoadImagesAndLabels(Dataset):
         return torch.from_numpy(img), labels_out
 
     def load_image(self, index):
-        path = self.img_files[index]
-        img = cv2.imread(path)
-        assert img is not None, f"Image Not Found {path}"
+        image_id = self.image_id_list[index]
+        image_path = self.image_path_list[index]
+        img = cv2.imread(image_path)
+        assert img is not None, f"Image Not Found {image_path}"
         h0, w0 = img.shape[:2]
         r = self.img_size / max(h0, w0)
         # if r != 1:
@@ -137,11 +143,13 @@ class LoadImagesAndLabels(Dataset):
         return img, (h0, w0), img.shape[:2]
 
     def load_label(self, index):
-        path = self.label_files[index]
-        with open(path, "r") as f:
-            label = np.array(
-                [x.split() for x in f.read().strip().splitlines()], dtype=np.float32
-            )
+        image_id = self.image_id_list[index]
+        annotation = self.annotation_dict[image_id]
+        label = np.empty([len(annotation), 5], dtype=np.float32)
+        for i, x in enumerate(annotation):
+            category_id = x["category_id"]
+            bbox = x["bbox"]
+            label[i] = category_id, *bbox
         return label
 
     @staticmethod

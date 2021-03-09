@@ -1,17 +1,8 @@
 # COCO 2017 dataset http://cocodataset.org
-# Train command: python train.py --data coco.yaml
-# Default dataset location is next to /yolov3:
-#   /parent_folder
-#     /coco
-#     /yolov3
-
-
-# download command/URL (optional)
-download: bash data/scripts/get_coco.sh
-
-# train and val data as 1) directory: path/images/, 2) file: path/images.txt, or 3) list: [path1/images/, path2/images/]
-train: ../coco/train2017.txt  # 118287 images
-val: ../coco/val2017.txt  # 5000 images
+train_img_dir: /home/data/coco/train2014 
+train_annotation_file: /home/data/coco/annotations/instances_train2014.json 
+val_img_dir: /home/data/coco/val2014 
+val_annotation_file: /home/data/coco/instance_val2014.json
 test: ../coco/test-dev2017.txt  # 20288 of 40670 images, submit to https://competitions.codalab.org/competitions/20794
 
 # number of classes

@@ -20,7 +20,8 @@ def train(opt, device, tb_writer=None):
     """
     with open(opt.data, "r") as f:
         data_dict = yaml.load(f, Loader=yaml.FullLoader)
-    train_path = data_dict["train"]
+    train_img_dir = data_dict["train_img_dir"]
+    train_annotation_file = data_dict["train_annotation_file"]
     save_dir = Path(opt.save_dir)
     wdir = save_dir / "weights"
     wdir.mkdir(parents=True, exist_ok=True)
@@ -32,7 +33,10 @@ def train(opt, device, tb_writer=None):
         yaml.dump(vars(opt), f, sort_keys=False)
     # img_size = opt.img_size
     batch_size = opt.batch_size
-    dataset, dataloader = create_dataset(train_path, batch_size=batch_size)
+    dataset, dataloader = create_dataset(
+        train_img_dir, train_annotation_file, batch_size=batch_size
+    )
+    print("load the image successfully!")
     model = Model().to(device)
     optimizer = optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
     start_epoch = 0
@@ -85,7 +89,7 @@ def train(opt, device, tb_writer=None):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data", type=str, default="data/coco128.yaml")
+    parser.add_argument("--data", type=str, default="data/coco.yaml")
     parser.add_argument("--device", default="")
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument(

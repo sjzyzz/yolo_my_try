@@ -35,10 +35,8 @@ def xyxy2xywh(x):
     return y
 
 
-def xywh2xyxy(x, w, h):
+def xywh2xyxy(x):
     y = x.clone() if isinstance(x, torch.Tensor) else x.copy()
-    x[:, [2, 4]] *= w
-    x[:, [3, 5]] *= h
     y[:, 2] = x[:, 2] - x[:, 4] / 2
     y[:, 3] = x[:, 3] - x[:, 5] / 2
     y[:, 4] = x[:, 2] + x[:, 4] / 2
@@ -147,4 +145,5 @@ def init_seed(seed=0):
 def non_max_suppression(prediction, conf_thres, iou_thres):
     xc = prediction[..., 4] > conf_thres
     prediction = prediction[xc]
+    prediction = xywh2xyxy(prediction)
     return prediction
