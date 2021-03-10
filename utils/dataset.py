@@ -107,16 +107,11 @@ class LoadImagesAndLabels(Dataset):
         label = []
         if nL:
             label = x.copy()
-            h, w = (
-                (img.shape[0] - 2 * pad[1]) / ratio[1],
-                (img.shape[1] - 2 * pad[0]) / ratio[0],
-            )
             # change the label according to the image transform(where x, y is the top left and bottom right corner absolutely)
-            label[:, 1] = ratio[0] * (x[:, 1] - x[:, 3] / 2) * w + pad[0]
-            label[:, 2] = ratio[1] * (x[:, 2] - x[:, 4] / 2) * h + pad[1]
-            label[:, 3] = label[:, 1] + ratio[0] * label[:, 3] * w
-            label[:, 4] = label[:, 2] + ratio[1] * label[:, 4] * h
-        if nL:
+            label[:, 1] = ratio[0] * x[:, 1] + pad[0]
+            label[:, 2] = ratio[1] * x[:, 2] + pad[1]
+            label[:, 3] = label[:, 1] + ratio[0] * label[:, 3]
+            label[:, 4] = label[:, 2] + ratio[1] * label[:, 4]
             label[:, 1:5] = xyxy2xywh(label[:, 1:5])
             label[:, [2, 4]] /= img.shape[0]
             label[:, [1, 3]] /= img.shape[1]

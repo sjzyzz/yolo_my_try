@@ -26,6 +26,7 @@ def compute_loss(preds, targets, model):
     balance = [4.0, 1.0, 0.4] if len(preds) == 3 else [4.0, 1.0, 0.4, 0.1]
 
     for i, preds_i in enumerate(preds):
+        print(i)
         img, a, gj, gi = indices[i]
         n = img.shape[0]
 

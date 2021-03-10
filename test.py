@@ -17,35 +17,17 @@ train_img_dir = data_dict["train_img_dir"]
 train_annotation_file = data_dict["train_annotation_file"]
 names = data_dict["names"]
 # print(train_path)
-dataset, dataloader = create_dataset(
-    train_img_dir, train_annotation_file, batch_size=16
-)
+dataset, dataloader = create_dataset(train_img_dir, train_annotation_file, batch_size=4)
 
 # model = Model()
 
 # pbar = tqdm(dataloader)
-for i, (img, labels) in enumerate(dataloader):
+for i, (img0, img, labels) in enumerate(dataloader):
     if i != 0:
         break
-    print(img.shape)
-    print(labels)
-# images = LoadImages("data/images")
-# for i, img in enumerate(images):
-#     cv2.show(str(i), img)
-#     cv2.waitKey(0)
-#     cv2.destroyAllWindows()
-# import torch
-
-# # a = torch.tensor([[[1, 2, 2], [1, 2, 3]], [[1, 2, 2], [1, 2, 3]]])
-# # print(a[..., 2] > 2)
-# # print(a[a[..., 2] > 2])
-# def assign(a):
-#     a[2] = 0
-
-
-# a = torch.tensor([0, 1, 2])
-# assign(a)
-# print(a)
-# e = a[1]
-# e = 5
-# print(a)
+    for label in labels:
+        img_id = int(label[0])
+        name_id = int(label[1])
+        plot_one_box(label[2:6], img0[img_id])
+    for j, draw_img in enumerate(img0):
+        cv2.imwrite(f"check_images/{j}.jpg", draw_img)
