@@ -138,5 +138,13 @@ def parse_model(yaml_dict, channels):
     return nn.Sequential(*layers), sorted(save)
 
 
+class MyDataParallel(nn.DataParallel):
+    def __getattr__(self, name):
+        try:
+            return super().__getattr__(name)
+        except AttributeError:
+            return getattr(self.module, name)
+
+
 if __name__ == "__main__":
     model = Model()

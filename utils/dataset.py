@@ -63,6 +63,9 @@ class LoadImagesAndLabels(Dataset):
 
         with open(annotation_path, "r") as f:
             data_dict = json.load(f)
+        self.id_projection_dict = {}
+        for i, category in enumerate(data_dict["categories"]):
+            self.id_projection_dict[category["id"]] = i
         annotations = data_dict["annotations"]
         image_id_set = set()
         annotation_dict = {}
@@ -142,7 +145,7 @@ class LoadImagesAndLabels(Dataset):
         annotation = self.annotation_dict[image_id]
         label = np.empty([len(annotation), 5], dtype=np.float32)
         for i, x in enumerate(annotation):
-            category_id = x["category_id"]
+            category_id = self.id_projection_dict[x["category_id"]]
             bbox = x["bbox"]
             label[i] = category_id, *bbox
         return label

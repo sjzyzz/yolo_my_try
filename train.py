@@ -1,3 +1,4 @@
+import time
 import torch
 from pathlib import Path
 import torch.optim as optim
@@ -5,12 +6,13 @@ from torch.utils.tensorboard import SummaryWriter
 import torchvision
 import argparse
 import yaml
+import torch.nn as nn
 
 from utils.loss import compute_loss
 from utils.general import increment_path, get_latest_run
 from utils.dataset import create_dataset
 from utils.torch_utils import select_device
-from models.yolo import Model
+from models.yolo import Model, MyDataParallel
 
 
 def train(opt, device, tb_writer=None):
@@ -37,7 +39,11 @@ def train(opt, device, tb_writer=None):
         train_img_dir, train_annotation_file, batch_size=batch_size
     )
     print("load the image successfully!")
-    model = Model().to(device)
+    model = Model()
+    if torch.cuda.device_count() > 1:
+        print(f"Let's use {torch.cuda.device_count()} GPUs!")
+        model = MyDataParallel(model)
+    model.to(device)
     optimizer = optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
     start_epoch = 0
     best_loss = -1.0
@@ -51,32 +57,38 @@ def train(opt, device, tb_writer=None):
     running_loss = 0.0
     for epoch in range(start_epoch, max_epoch):
         model.train()
-        # print(f"Epoch {epoch}:")
+        epoch_tick = time.time()
         epoch_loss = 0.0
         for i, (imgs, targets) in enumerate(dataloader):
-            # write some image grids via tensorboard
-            # img_gird = torchvision.utils.make_grid(imgs)
-            # writer.add_image(f"16 images in the batch{i}", img_gird)
-
+            if i == 100:
+                break
             preds = model(imgs.to(device))
-            print(i)
             loss = compute_loss(preds, targets.to(device), model)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            # print(f"    the loss in batch {i} is {loss}")
             epoch_loss += loss.item()
-            # writer.add_scalar("training loss", loss, epoch * len(dataloader) + i)
             running_loss += loss.item()
-            if i % 4 == 3:
+            if i % 32 == 31:
                 tb_writer.add_scalar(
                     "training loss", running_loss, epoch * len(dataloader) + i
                 )
                 running_loss = 0
+            print(
+                f"Now it is training on {i+1}/{len(dataloader)} batch in epoch {epoch + 1}",
+                end="\r",
+            )
+        epoch_time = time.time() - epoch_tick
+        remaining_epoch = max_epoch - epoch - 1
+        print(
+            f"{epoch+1} epoch is done, approximately {epoch_time * remaining_epoch} seconds remaining\n",
+            end="\r",
+        )
+        if best_loss == -1 or epoch_loss < best_loss:
+            best_loss = epoch_loss
+
         # save the checkpoint
         if not opt.nosave:
-            if best_loss == -1 or epoch_loss < best_loss:
-                best_loss = epoch_loss
             save_dict = {
                 "epoch": epoch,
                 "best_loss": best_loss,
@@ -84,7 +96,7 @@ def train(opt, device, tb_writer=None):
                 "optimizer_state_dict": optimizer.state_dict(),
             }
             torch.save(save_dict, last)
-            if best_loss == epoch_loss:
+            if epoch_loss == best_loss:
                 torch.save(save_dict, best)
 
 
