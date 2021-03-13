@@ -62,7 +62,7 @@ def build_targets(preds, targets, model):
     tbox = []
     indices = []
     anch = []
-    detect = model.model[-1]
+    detect = model.module.model[-1]
     anchor_num = detect.anchor_num
     target_num = targets.shape[0]
     anchor_index = (

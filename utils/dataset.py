@@ -1,4 +1,5 @@
 import torch
+import torch.distributed as dist
 from torch.utils.data import Dataset
 import argparse
 import yaml
@@ -13,6 +14,7 @@ import numpy as np
 
 from utils.general import check_file, xyxy2xywh, xywh2xyxy
 from utils.plot import plot_one_box
+from utils.torch_utils import torch_distributed_zero_first
 
 
 class LoadImages:
@@ -43,13 +45,17 @@ class LoadImages:
 
 
 def create_dataset(image_base_path, annotation_path, img_size=640, batch_size=8):
-    """
-    we need to define the img_size because the we need stack when use batch, but the image may have the different size
-    """
-    dataset = LoadImagesAndLabels(image_base_path, annotation_path, img_size=img_size,)
+    with torch_distributed_zero_first(dist.get_rank()):
+        dataset = LoadImagesAndLabels(
+            image_base_path, annotation_path, img_size=img_size,
+        )
+    sampler = torch.utils.data.DistributedSampler(dataset)
     loader = torch.utils.data.DataLoader
     dataloader = loader(
-        dataset, batch_size=batch_size, collate_fn=LoadImagesAndLabels.collate_fn
+        dataset,
+        batch_size=batch_size,
+        sampler=sampler,
+        collate_fn=LoadImagesAndLabels.collate_fn,
     )
     return dataset, dataloader
 
