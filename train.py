@@ -64,8 +64,6 @@ def train(gpu, ngpus_per_node, args):
         model.train()
         epoch_loss = 0.0
         for i, (imgs, targets) in enumerate(dataloader):
-            if i > 50:
-                break
             imgs = imgs.cuda(args.gpu)
             targets = targets.cuda(args.gpu)
             preds = model(imgs)
@@ -81,7 +79,7 @@ def train(gpu, ngpus_per_node, args):
             #     )
             #     running_loss = 0
             print(
-                f"Now it is training on {i+1}/{len(dataloader)} batch in epoch {epoch + 1}",
+                f"Process {args.rank} is training on {i+1:4d}/{len(dataloader)} batch in epoch {epoch + 1:3d}",
                 end="\r",
             )
         if best_loss == -1 or epoch_loss < best_loss:
