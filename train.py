@@ -20,11 +20,9 @@ from models.yolo import Model, MyDataParallel
 def train(gpu, ngpus_per_node, args):
     args.gpu = gpu
     args.rank = args.rank * ngpus_per_node + gpu
-    print(f"process {gpu} start joining the process group")
     dist.init_process_group(
         "nccl", init_method=args.dist_url, world_size=args.world_size, rank=args.rank
     )
-    print(f"process {gpu} join the process group!")
     with open(args.data, "r") as f:
         data_dict = yaml.load(f, Loader=yaml.FullLoader)
     train_img_dir = data_dict["train_img_dir"]
@@ -135,19 +133,20 @@ if __name__ == "__main__":
         help="resume the most recent train",
     )  # if the --resume appear in the command but no argument follows, the const value(True) will be assign, if the --resume does not appear in the command, the default value(False) will be assign------the function of "nargs=?"
     args = parser.parse_args()
+    world_size = args.world_size
 
     if args.resume:
         ckpt = get_latest_run()
         with open(Path(ckpt).parent.parent / "args.yaml", "r") as f:
             args = argparse.Namespace(**yaml.load(f, Loader=yaml.FullLoader))
-        args.resume, args.weights = True, ckpt
+        args.resume, args.weights, args.world_size = True, ckpt, world_size
     else:
         args.save_dir = increment_path(
             Path(args.project) / args.name, exist_ok=args.exist_ok
         )
-    print(args)
 
     ngpus = torch.cuda.device_count()
     if args.multiprocessing_distributed:
         args.world_size = args.world_size * ngpus
+        print(args)
         mp.spawn(train, nprocs=ngpus, args=(ngpus, args,))
