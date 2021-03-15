@@ -78,6 +78,8 @@ def main_worker(gpu, ngpus_per_node, args):
         data_dict = yaml.load(f, Loader=yaml.FullLoader)
     train_img_dir = data_dict["train_img_dir"]
     train_annotation_file = data_dict["train_annotation_file"]
+    val_img_dir = data_dict["val_img_dir"]
+    val_annotation_file = data_dict["val_annotation_file"]
     save_dir = Path(args.save_dir)
     wdir = save_dir / "weights"
     wdir.mkdir(parents=True, exist_ok=True)
@@ -90,8 +92,11 @@ def main_worker(gpu, ngpus_per_node, args):
             yaml.dump(vars(args), f, sort_keys=False)
     # img_size = args.img_size
     batch_size = args.batch_size
-    dataset, dataloader = create_dataset(
+    _, train_loader = create_dataset(
         train_img_dir, train_annotation_file, batch_size=batch_size
+    )
+    _, val_loader = create_dataset(
+        val_img_dir, val_annotation_file, batch_size=batch_size
     )
     model = Model()
     torch.cuda.set_device(args.gpu)
@@ -109,7 +114,8 @@ def main_worker(gpu, ngpus_per_node, args):
         model.load_state_dict(ckpt["model_state_dict"])
         optimizer.load_state_dict(ckpt["optimizer_state_dict"])
     for epoch in range(start_epoch, max_epoch):
-        train(model, dataloader, compute_loss, optimizer, epoch, args)
+        train(train_loader, model, compute_loss, optimizer, epoch, args)
+        acc = validate(val_loader, model, compute_loss, args)
         # save the checkpoint at the process 0
         if not args.nosave and args.rank % ngpus_per_node == 0:
             save_dict = {
@@ -120,17 +126,17 @@ def main_worker(gpu, ngpus_per_node, args):
             torch.save(save_dict, last)
 
 
-def train(model, dataloader, criterion, optimizer, epoch, args):
+def train(train_loader, model, criterion, optimizer, epoch, args):
     data_time = AverageMeter("Data", ":6.3f")
     batch_time = AverageMeter("Time", ":6.3f")
     losses = AverageMeter("Loss", ":.4e")
     progress = ProgressMeter(
-        len(dataloader), [data_time, batch_time, losses], "Epoch: [{}]".format(epoch)
+        len(train_loader), [data_time, batch_time, losses], "Epoch: [{}]".format(epoch)
     )
 
     model.train()
     end = time.time()
-    for i, (images, target) in enumerate(dataloader):
+    for i, (images, target) in enumerate(train_loader):
         data_time.update(time.time() - end)
         images = images.cuda(args.gpu)
         target = target.cuda(args.gpu)
@@ -146,6 +152,32 @@ def train(model, dataloader, criterion, optimizer, epoch, args):
 
         if i % args.print_freq == 0:
             progress.display(i)
+
+
+def validate(val_loader, model, criterion, args):
+    batch_time = AverageMeter("Time", ":6.3f")
+    losses = AverageMeter("Loss", ":.4e")
+    accuracies = AverageMeter("Accuracy", ":.4e")
+    progress = ProgressMeter(
+        len(val_loader), [batch_time, losses, accuracies], "Test: "
+    )
+
+    model.eval()
+    with torch.no_grad():
+        end = time.time()
+        for i, (images, target) in enumerate(val_loader):
+            images = images.cuda(args.gpu)
+            target = target.cuda(args.gpu)
+
+            output = model(images)
+            loss = criterion(output, target, model)
+            acc = accuracy(output, target)
+            batch_time.update(time.time() - end)
+            losses.update(loss.item(), images.size(0))
+            accuracies.update(acc, images.size(0))
+
+            if i % args.print_freq == 0:
+                progress.display(i)
 
 
 class AverageMeter(object):
