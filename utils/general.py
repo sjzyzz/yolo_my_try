@@ -1,6 +1,7 @@
 import glob
 import os
 import torch
+import torch.tensor as tensor
 import math
 from pathlib import Path
 import re
@@ -37,12 +38,38 @@ def xyxy2xywh(x):
 
 def xywh2xyxy(x):
     y = x.clone() if isinstance(x, torch.Tensor) else x.copy()
-    y[:, 2] = x[:, 2] - x[:, 4] / 2
-    y[:, 3] = x[:, 3] - x[:, 5] / 2
-    y[:, 4] = x[:, 2] + x[:, 4] / 2
-    y[:, 5] = x[:, 3] + x[:, 5] / 2
+
+    y[:, 0] = x[:, 0] - x[:, 2] / 2
+    y[:, 1] = x[:, 1] - x[:, 3] / 2
+    y[:, 2] = x[:, 0] + x[:, 2] / 2
+    y[:, 3] = x[:, 1] + x[:, 3] / 2
 
     return y
+
+
+def box_area(boxes: torch.Tensor) -> torch.Tensor:
+    return (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
+
+
+def _box_inter_union(boxes1, boxes2):
+    area1 = box_area(boxes1)  # N * 1
+    area2 = box_area(boxes2)  # M * 1
+
+    lt = torch.max(boxes1[:, None, :2], boxes[:, :2])  # N * M * 2
+    rb = torch.min(boxes1[:, None, 2:], boxes2[:, 2:])  # N * M * 2
+
+    wh = (rb - lt).clamp(min=0)  # N * M * 2
+    inter = wh[:, :, 0] * wh[:, :, 1]  # N * M * 1
+
+    union = area1[:, None] + area2 - inter
+
+    return inter, union
+
+
+def box_iou(boxes1, boxes2):
+    inter, union = _box_inter_union(boxes1, boxes2)
+
+    return inter, union
 
 
 def bbox_iou(box1, box2, x1y1x2y2=True, GIoU=False, DIoU=False, CIoU=False, eps=1e-9):
@@ -142,8 +169,28 @@ def init_seed(seed=0):
     init_torch_seeds(seed)
 
 
-def non_max_suppression(prediction, conf_thres, iou_thres):
-    xc = prediction[..., 4] > conf_thres
-    prediction = prediction[xc]
-    prediction = xywh2xyxy(prediction)
-    return prediction
+def non_max_suppression(prediction, args):
+    """
+    Args:
+        prediction: a tensor with shape of num_image * ?? * 85, and the format of single is cx,cy,w,h,obj,cls(80),and the coordinate is in absolute form
+    Return:
+        output: a tensor with shape of ? * 6, the 6 represent x,y,x,y,conf,cls
+    """
+    conf_thres = args.conf_thres
+    # for every image
+    output = [torch.zeros((0, 6), device=prediction.device)] * prediction.size(0)
+    for xi, x in enumerate(prediction):
+        # filter the prediction whose obj value is less than conf_thres
+        x = x[conf_thres < x[:, 4:5]]
+        x[:, 5:] *= x[:, 4:5]
+        # find the bigest value among all 80 classes
+        # get all parts and concatenate together and transform the xywh to xyxy
+        box = xywh2xyxy(x[:, :4])
+        conf, j = x[:, 5:].max(1, keepdim=True)
+        x = torch.cat((box, conf, j), 1)
+        x = x[conf_thres < x[:, 4:5]]
+        # TODO: perform a NMS
+
+        output[xi] = x
+
+    return output

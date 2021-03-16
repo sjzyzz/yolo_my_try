@@ -45,12 +45,14 @@ class Detect(nn.Module):
                 if self.grid[i].shape[0:2] != x[i].shape[2:4]:
                     self.grid[i] = self._make_grid(nx, ny)
                 y = x[i].sigmoid()
-                y[..., 0:2] = (y[..., 0:2] + self.grid[i]) * self.stride[i]
-                y[..., 2:4] = (
-                    y[..., 2:4] ** 2 * self.anchor_grid[i]
+                y[..., 0:2] = (y[..., 0:2] + self.grid[i].to(y.device)) * self.stride[
+                    i
+                ].to(y.device)
+                y[..., 2:4] = y[..., 2:4] ** 2 * self.anchor_grid[i].to(
+                    y.device
                 )  # need to multiple the wh of anchor
                 z.append(y.contiguous().view(bs, -1, self.output_num))
-        return x if self.training else z
+        return x if self.training else (torch.cat(z, 1), x)
 
     @staticmethod
     def _make_grid(nx, ny):

@@ -66,6 +66,10 @@ class LoadImagesAndLabels(Dataset):
     ):
         self.img_size = img_size
         self.image_base_path = image_base_path
+        if self.image_base_path.endswith("train2014"):
+            self.train = True
+        else:
+            self.train = False
 
         with open(annotation_path, "r") as f:
             data_dict = json.load(f)
@@ -91,7 +95,8 @@ class LoadImagesAndLabels(Dataset):
 
     def id2path(self, image_id):
         new_id = str(image_id).zfill(12)
-        return f"{self.image_base_path}/COCO_train2014_{new_id}.jpg"
+        mid = "train" if self.train else "val"
+        return f"{self.image_base_path}/COCO_{mid}2014_{new_id}.jpg"
 
     def __len__(self):
         return len(self.image_id_list)

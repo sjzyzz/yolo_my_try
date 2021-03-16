@@ -11,7 +11,7 @@ import torch.multiprocessing as mp
 import torch.distributed as dist
 
 from utils.loss import compute_loss
-from utils.general import increment_path, get_latest_run
+from utils.general import increment_path, get_latest_run, box_iou, non_max_suppression
 from utils.dataset import create_dataset
 from utils.torch_utils import select_device
 from models.yolo import Model, MyDataParallel
@@ -45,6 +45,8 @@ parser.add_argument(
     default=False,
     help="resume the most recent train",
 )  # if the --resume appear in the command but no argument follows, the const value(True) will be assign, if the --resume does not appear in the command, the default value(False) will be assign------the function of "nargs=?"
+parser.add_argument("--iou-thres", type=float, default=0.5)
+parser.add_argument("--conf_thres", type=float, default=0.001)
 
 
 def main():
@@ -115,7 +117,7 @@ def main_worker(gpu, ngpus_per_node, args):
         optimizer.load_state_dict(ckpt["optimizer_state_dict"])
     for epoch in range(start_epoch, max_epoch):
         train(train_loader, model, compute_loss, optimizer, epoch, args)
-        acc = validate(val_loader, model, compute_loss, args)
+        validate(val_loader, model, compute_loss, args)
         # save the checkpoint at the process 0
         if not args.nosave and args.rank % ngpus_per_node == 0:
             save_dict = {
@@ -137,6 +139,9 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
     model.train()
     end = time.time()
     for i, (images, target) in enumerate(train_loader):
+        # TODO: additional constrain here
+        if 10 < i:
+            break
         data_time.update(time.time() - end)
         images = images.cuda(args.gpu)
         target = target.cuda(args.gpu)
@@ -157,9 +162,10 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
 def validate(val_loader, model, criterion, args):
     batch_time = AverageMeter("Time", ":6.3f")
     losses = AverageMeter("Loss", ":.4e")
-    accuracies = AverageMeter("Accuracy", ":.4e")
+    precious = AverageMeter("Precious", ":.4e")
+    recall = AverageMeter("Recall", ":.4e")
     progress = ProgressMeter(
-        len(val_loader), [batch_time, losses, accuracies], "Test: "
+        len(val_loader), [batch_time, losses, precious, recall], "Test: "
     )
 
     model.eval()
@@ -169,15 +175,61 @@ def validate(val_loader, model, criterion, args):
             images = images.cuda(args.gpu)
             target = target.cuda(args.gpu)
 
-            output = model(images)
-            loss = criterion(output, target, model)
-            acc = accuracy(output, target)
+            inf_out, train_out = model(images)
+            loss = criterion(train_out, target, model)
+            prec, rec = accuracy(inf_out, target, args)
             batch_time.update(time.time() - end)
             losses.update(loss.item(), images.size(0))
-            accuracies.update(acc, images.size(0))
+            precious.update(prec, n=images.size(0))
+            recall.update(rec, n=images.size(0))
 
             if i % args.print_freq == 0:
                 progress.display(i)
+
+
+def accuracy(output, target, args):
+    """
+    Get the precision, recall of the total batch, both are in the naive scale and xyxy format
+    Args:
+        output: a tensor whose shape is num_image * 6, and 6 represent x, y, x, y, obj, cls
+        target: a tensor whose shape is num_target * 6, and 5 represent img, cls, x, y, x, y
+    """
+    output = non_max_suppression(output, args)
+    TP, FP = 0, 0
+    # for every image
+    for ii, pred in enumerate(output):
+        labels = target[target[:, 0] == ii, 1:]
+        cls_tensor = labels[:, 0]
+        # for every class in the target
+        for cls in torch.unique(cls_tensor, sorted=True):
+            # find the corresponding prediction and target box and get the matrix
+            ti = labels[:, 0] == cls
+            sub_labels = labels[ti]
+            pi = pred[:, -1] == cls
+            sub_pred = pred[pi]
+            sub_pred = torch.tensor(
+                sorted(sub_pred, key=lambda row: row[4], reverse=True)
+            )
+            bbox_matrix = box_iou(sub_pred[:, :4], sub_labels[:, 1:])
+            # for every prediction, find the largest iou corresponding target, if the iou is more than iou_threshold and the target has not been detected, TP plus one, else FP plus one
+            seen = torch.zeros(len(sub_labels), dtype=bool)
+            max_iou, target_indexs = torch.max(bbox_matrix, dim=1)
+            for i, target_index in enumerate(target_indexs):
+                if iou_thres < max_iou[i]:
+                    if not seen[target_index]:
+                        TP += 1
+                        seen[target_index] = True
+                    else:
+                        FP += 1
+                else:
+                    FP += 1
+
+    # calculate the matrics
+    npos = target.size(0)
+    prec = TP / (TP + FP)
+    rec = TP / npos
+
+    return prec, rec
 
 
 class AverageMeter(object):
