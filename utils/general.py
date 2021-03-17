@@ -55,7 +55,7 @@ def _box_inter_union(boxes1, boxes2):
     area1 = box_area(boxes1)  # N * 1
     area2 = box_area(boxes2)  # M * 1
 
-    lt = torch.max(boxes1[:, None, :2], boxes[:, :2])  # N * M * 2
+    lt = torch.max(boxes1[:, None, :2], boxes2[:, :2])  # N * M * 2
     rb = torch.min(boxes1[:, None, 2:], boxes2[:, 2:])  # N * M * 2
 
     wh = (rb - lt).clamp(min=0)  # N * M * 2
@@ -69,7 +69,7 @@ def _box_inter_union(boxes1, boxes2):
 def box_iou(boxes1, boxes2):
     inter, union = _box_inter_union(boxes1, boxes2)
 
-    return inter, union
+    return inter / union
 
 
 def bbox_iou(box1, box2, x1y1x2y2=True, GIoU=False, DIoU=False, CIoU=False, eps=1e-9):
@@ -174,21 +174,21 @@ def non_max_suppression(prediction, args):
     Args:
         prediction: a tensor with shape of num_image * ?? * 85, and the format of single is cx,cy,w,h,obj,cls(80),and the coordinate is in absolute form
     Return:
-        output: a tensor with shape of ? * 6, the 6 represent x,y,x,y,conf,cls
+        output: list of tensor with shape of ? * 6, the 6 represent x,y,x,y,conf,cls
     """
     conf_thres = args.conf_thres
     # for every image
     output = [torch.zeros((0, 6), device=prediction.device)] * prediction.size(0)
     for xi, x in enumerate(prediction):
         # filter the prediction whose obj value is less than conf_thres
-        x = x[conf_thres < x[:, 4:5]]
+        x = x[conf_thres < x[:, 4]]
         x[:, 5:] *= x[:, 4:5]
         # find the bigest value among all 80 classes
         # get all parts and concatenate together and transform the xywh to xyxy
         box = xywh2xyxy(x[:, :4])
         conf, j = x[:, 5:].max(1, keepdim=True)
         x = torch.cat((box, conf, j), 1)
-        x = x[conf_thres < x[:, 4:5]]
+        x = x[conf_thres < x[:, 4]]
         # TODO: perform a NMS
 
         output[xi] = x
