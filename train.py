@@ -46,7 +46,7 @@ parser.add_argument(
     help="resume the most recent train",
 )  # if the --resume appear in the command but no argument follows, the const value(True) will be assign, if the --resume does not appear in the command, the default value(False) will be assign------the function of "nargs=?"
 parser.add_argument("--iou-thres", type=float, default=0.5)
-parser.add_argument("--conf_thres", type=float, default=0.001)
+parser.add_argument("--conf-thres", type=float, default=0.001)
 
 
 def main():
@@ -139,9 +139,6 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
     model.train()
     end = time.time()
     for i, (images, target) in enumerate(train_loader):
-        # TODO: additional constrain here
-        if 10 < i:
-            break
         data_time.update(time.time() - end)
         images = images.cuda(args.gpu)
         target = target.cuda(args.gpu)
@@ -180,8 +177,8 @@ def validate(val_loader, model, criterion, args):
             prec, rec = accuracy(inf_out, target, args)
             batch_time.update(time.time() - end)
             losses.update(loss.item(), images.size(0))
-            precious.update(prec, n=images.size(0))
-            recall.update(rec, n=images.size(0))
+            precious.update(prec)
+            recall.update(rec)
 
             if i % args.print_freq == 0:
                 progress.display(i)
@@ -207,15 +204,15 @@ def accuracy(output, target, args):
             sub_labels = labels[ti]
             pi = pred[:, -1] == cls
             sub_pred = pred[pi]
-            sub_pred = torch.tensor(
-                sorted(sub_pred, key=lambda row: row[4], reverse=True)
-            )
+            if sub_pred.size(0) == 0:
+                continue
+            sub_pred = sub_pred[torch.argsort(sub_pred[:, 4], descending=True)]
             bbox_matrix = box_iou(sub_pred[:, :4], sub_labels[:, 1:])
             # for every prediction, find the largest iou corresponding target, if the iou is more than iou_threshold and the target has not been detected, TP plus one, else FP plus one
             seen = torch.zeros(len(sub_labels), dtype=bool)
             max_iou, target_indexs = torch.max(bbox_matrix, dim=1)
             for i, target_index in enumerate(target_indexs):
-                if iou_thres < max_iou[i]:
+                if args.iou_thres < max_iou[i]:
                     if not seen[target_index]:
                         TP += 1
                         seen[target_index] = True
@@ -226,7 +223,10 @@ def accuracy(output, target, args):
 
     # calculate the matrics
     npos = target.size(0)
-    prec = TP / (TP + FP)
+    if not TP + FP == 0:
+        prec = TP / (TP + FP)
+    else:
+        prec = 0
     rec = TP / npos
 
     return prec, rec
