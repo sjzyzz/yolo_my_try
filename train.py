@@ -1,3 +1,4 @@
+import cv2
 import time
 import torch
 import torch.optim as optim
@@ -11,13 +12,21 @@ import torch.multiprocessing as mp
 import torch.distributed as dist
 
 from utils.loss import compute_loss
-from utils.general import increment_path, get_latest_run, box_iou, non_max_suppression
+from utils.general import (
+    increment_path,
+    get_latest_run,
+    box_iou,
+    non_max_suppression,
+    xywh2xyxy,
+)
 from utils.dataset import create_dataset
 from utils.torch_utils import select_device
 from models.yolo import Model, MyDataParallel
+from utils.plot import plot_one_box
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--data", type=str, default="data/coco.yaml")
+parser.add_argument("--image-size", nargs="+", type=int, default=[640, 640])
 parser.add_argument("--batch-size", type=int, default=8)
 parser.add_argument("--dist-url", type=str, default="tcp://127.0.0.1:23456")
 parser.add_argument(
@@ -117,7 +126,7 @@ def main_worker(gpu, ngpus_per_node, args):
         optimizer.load_state_dict(ckpt["optimizer_state_dict"])
     for epoch in range(start_epoch, max_epoch):
         train(train_loader, model, compute_loss, optimizer, epoch, args)
-        validate(val_loader, model, compute_loss, args)
+        # validate(val_loader, model, compute_loss, args)
         # save the checkpoint at the process 0
         if not args.nosave and args.rank % ngpus_per_node == 0:
             save_dict = {
@@ -138,15 +147,27 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
 
     model.train()
     end = time.time()
-    for i, (images, target) in enumerate(train_loader):
+    for i, (img0, images, targets) in enumerate(train_loader):
+        if i != 0:
+            return
         data_time.update(time.time() - end)
         images = images.cuda(args.gpu)
-        target = target.cuda(args.gpu)
+        targets = targets.cuda(args.gpu)
         pred = model(images)
-        loss = criterion(pred, target, model)
+        loss = criterion(pred, targets, model)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+
+        if args.gpu == 0:
+            targets[:, 2:] = xywh2xyxy(targets[:, 2:])
+            targets[:, 2:] *= args.image_size[0]
+            for i, target in enumerate(targets):
+                img_id = int(target[0])
+                plot_one_box(target[2:], img0[img_id])
+            for i, img in enumerate(img0):
+                cv2.imwrite(f"{i}.jpg", img)
+            print("imwrited")
 
         losses.update(loss.item(), images.size(0))
         batch_time.update(time.time() - end)

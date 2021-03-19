@@ -110,6 +110,7 @@ class LoadImagesAndLabels(Dataset):
         img, (h0, w0), (h, w) = self.load_image(index)
         new_shape = self.img_size
         img, ratio, pad = letterbox(img, new_shape)
+        img0 = img
         # cv2.imshow(f"image {index}, file name {self.img_files[index]}", img)
         # cv2.waitKey(0)
         # cv2.destroyAllWindows()
@@ -137,7 +138,7 @@ class LoadImagesAndLabels(Dataset):
         img = img.astype("float32")
         img = np.ascontiguousarray(img)
 
-        return torch.from_numpy(img), labels_out
+        return img0, torch.from_numpy(img), labels_out
 
     def load_image(self, index):
         image_id = self.image_id_list[index]
@@ -163,10 +164,10 @@ class LoadImagesAndLabels(Dataset):
 
     @staticmethod
     def collate_fn(batch):
-        img, label = zip(*batch)
+        img0, img, label = zip(*batch)
         for i, l in enumerate(label):
             l[:, 0] = i
-        return torch.stack(img, 0), torch.cat(label, 0)
+        return img0, torch.stack(img, 0), torch.cat(label, 0)
 
 
 def img2label_path(img_paths):
