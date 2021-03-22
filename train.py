@@ -1,6 +1,7 @@
 import time
 import torch
 import torch.optim as optim
+import torch.backends.cudnn as cudnn
 from pathlib import Path
 from torch.utils.tensorboard import SummaryWriter
 import torchvision
@@ -124,9 +125,17 @@ def main_worker(gpu, ngpus_per_node, args):
         start_epoch = ckpt["epoch"] + 1
         model.load_state_dict(ckpt["model_state_dict"])
         optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+
+    cudnn.benchmark = True
+
+    tb_writer = None
+    if args.gpu == 0:
+        tb_writer = SummaryWriter(args.save_dir)
     for epoch in range(start_epoch, max_epoch):
-        epoch_loss = train(train_loader, model, compute_loss, optimizer, epoch, args)
-        validate(val_loader, model, compute_loss, args)
+        epoch_loss = train(
+            train_loader, model, compute_loss, optimizer, epoch, args, tb_writer
+        )
+        validate(val_loader, model, compute_loss, epoch, args, tb_writer)
         # save the checkpoint at the process 0
         if not args.nosave and args.rank % ngpus_per_node == 0:
             is_best = best_loss == -1.0 or epoch_loss < best_loss
@@ -143,7 +152,7 @@ def main_worker(gpu, ngpus_per_node, args):
                 torch.save(save_dict, best)
 
 
-def train(train_loader, model, criterion, optimizer, epoch, args):
+def train(train_loader, model, criterion, optimizer, epoch, args, tb_writer):
     data_time = AverageMeter("Data", ":6.3f")
     batch_time = AverageMeter("Time", ":6.3f")
     losses = AverageMeter("Loss", ":.4e")
@@ -158,7 +167,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         images = images.cuda(args.gpu)
         target = target.cuda(args.gpu)
         pred = model(images)
-        loss = criterion(pred, target, model)
+        loss, lbox, lcls, lobj = criterion(pred, target, model)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -167,12 +176,19 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         batch_time.update(time.time() - end)
         end = time.time()
 
+        tags = ["total loss", "box loss", "class loss", "obj loss"]
+        values = [loss, lbox, lcls, lobj]
         if i % args.print_freq == 0:
             progress.display(i)
+            if tb_writer:
+                for tag, val in zip(tags, values):
+                    tb_writer.add_scalar(
+                        tag, val / images.shape[0], epoch * len(train_loader) + i
+                    )
     return losses.avg
 
 
-def validate(val_loader, model, criterion, args):
+def validate(val_loader, model, criterion, epoch, args, tb_writer):
     batch_time = AverageMeter("Time", ":6.3f")
     losses = AverageMeter("Loss", ":.4e")
     precious = AverageMeter("Precious", ":.4e")
@@ -195,9 +211,15 @@ def validate(val_loader, model, criterion, args):
             losses.update(loss.item(), images.size(0))
             precious.update(prec)
             recall.update(rec)
+            end = time.time()
 
+            tags = ["total loss", "precious", "recall"]
+            values = [loss / images.shape[0], prec, rec]
             if i % args.print_freq == 0:
                 progress.display(i)
+                if tb_writer:
+                    for tag, value in zip(tags, values):
+                        tb_writer.add_scalar(tag, value, epoch * len(val_loader) + i)
 
 
 def accuracy(output, target, args):

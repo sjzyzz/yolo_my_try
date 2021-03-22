@@ -54,7 +54,7 @@ def compute_loss(preds, targets, model):
 
     loss = lbox + lcls + lobj
 
-    return loss
+    return loss, lbox, lcls, lobj
 
 
 def build_targets(preds, targets, model):
