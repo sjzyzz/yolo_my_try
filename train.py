@@ -11,7 +11,13 @@ import torch.multiprocessing as mp
 import torch.distributed as dist
 
 from utils.loss import compute_loss
-from utils.general import increment_path, get_latest_run, box_iou, non_max_suppression
+from utils.general import (
+    increment_path,
+    get_latest_run,
+    box_iou,
+    non_max_suppression,
+    xywh2xyxy,
+)
 from utils.dataset import create_dataset
 from utils.torch_utils import select_device
 from models.yolo import Model, MyDataParallel
@@ -47,6 +53,7 @@ parser.add_argument(
 )  # if the --resume appear in the command but no argument follows, the const value(True) will be assign, if the --resume does not appear in the command, the default value(False) will be assign------the function of "nargs=?"
 parser.add_argument("--iou-thres", type=float, default=0.5)
 parser.add_argument("--conf-thres", type=float, default=0.001)
+parser.add_argument("--image-size", type=int, nargs="+", default=[640, 640])
 
 
 def main():
@@ -107,25 +114,33 @@ def main_worker(gpu, ngpus_per_node, args):
     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
 
     optimizer = optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
+    best_loss = -1.0
     start_epoch = 0
     max_epoch = 300
     if args.resume:
         loc = "cuda:{}".format(args.gpu)
         ckpt = torch.load(args.weights, map_location=loc)
+        best_loss = ckpt["best_loss"]
         start_epoch = ckpt["epoch"] + 1
         model.load_state_dict(ckpt["model_state_dict"])
         optimizer.load_state_dict(ckpt["optimizer_state_dict"])
     for epoch in range(start_epoch, max_epoch):
-        train(train_loader, model, compute_loss, optimizer, epoch, args)
+        epoch_loss = train(train_loader, model, compute_loss, optimizer, epoch, args)
         validate(val_loader, model, compute_loss, args)
         # save the checkpoint at the process 0
         if not args.nosave and args.rank % ngpus_per_node == 0:
+            is_best = best_loss == -1.0 or epoch_loss < best_loss
+            if epoch_loss < best_loss:
+                best_loss = epoch_loss
             save_dict = {
                 "epoch": epoch,
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
+                "best_loss": best_loss,
             }
             torch.save(save_dict, last)
+            if is_best:
+                torch.save(save_dict, best)
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
@@ -154,6 +169,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
 
         if i % args.print_freq == 0:
             progress.display(i)
+    return losses.avg
 
 
 def validate(val_loader, model, criterion, args):
@@ -188,11 +204,14 @@ def accuracy(output, target, args):
     """
     Get the precision, recall of the total batch, both are in the naive scale and xyxy format
     Args:
-        output: a tensor whose shape is num_image * 6, and 6 represent x, y, x, y, obj, cls
-        target: a tensor whose shape is num_target * 6, and 5 represent img, cls, x, y, x, y
+        output: a tensor whose shape is num_image * 6, and 6 represent x, y, w, h, obj, cls
+        target: a tensor whose shape is num_target * 6, and 5 represent img, cls, x, y, w, h
     """
     output = non_max_suppression(output, args)
     TP, FP = 0, 0
+    # transform the target to actual image world
+    target[:, 2:] *= args.image_size[1]
+    target[:, 2:] = xywh2xyxy(target[:, 2:])
     # for every image
     for ii, pred in enumerate(output):
         labels = target[target[:, 0] == ii, 1:]
