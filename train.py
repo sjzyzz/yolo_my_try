@@ -55,17 +55,25 @@ parser.add_argument(
 parser.add_argument("--iou-thres", type=float, default=0.5)
 parser.add_argument("--conf-thres", type=float, default=0.001)
 parser.add_argument("--image-size", type=int, nargs="+", default=[640, 640])
+parser.add_argument("--debug", action="store_true")
 
 
 def main():
     args = parser.parse_args()
     world_size = args.world_size
 
+    debug_flag = args.debug
+    args.debug = False
     if args.resume:
         ckpt = get_latest_run()
         with open(Path(ckpt).parent.parent / "args.yaml", "r") as f:
             args = argparse.Namespace(**yaml.load(f, Loader=yaml.FullLoader))
-        args.resume, args.weights, args.world_size = True, ckpt, world_size
+        args.resume, args.weights, args.world_size, args.debug = (
+            True,
+            ckpt,
+            world_size,
+            debug_flag,
+        )
     else:
         args.save_dir = increment_path(
             Path(args.project) / args.name, exist_ok=args.exist_ok
@@ -135,7 +143,10 @@ def main_worker(gpu, ngpus_per_node, args):
         epoch_loss = train(
             train_loader, model, compute_loss, optimizer, epoch, args, tb_writer
         )
-        validate(val_loader, model, compute_loss, epoch, args, tb_writer)
+        if 50 < epoch:
+            validate(val_loader, model, compute_loss, epoch, args, tb_writer)
+        if args.debug:
+            return
         # save the checkpoint at the process 0
         if not args.nosave and args.rank % ngpus_per_node == 0:
             is_best = best_loss == -1.0 or epoch_loss < best_loss
@@ -153,6 +164,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args, tb_writer):
+    t0 = time.time()
     data_time = AverageMeter("Data", ":6.3f")
     batch_time = AverageMeter("Time", ":6.3f")
     losses = AverageMeter("Loss", ":.4e")
@@ -163,6 +175,8 @@ def train(train_loader, model, criterion, optimizer, epoch, args, tb_writer):
     model.train()
     end = time.time()
     for i, (images, target) in enumerate(train_loader):
+        if args.debug and 15 < i:
+            break
         data_time.update(time.time() - end)
         images = images.cuda(args.gpu)
         target = target.cuda(args.gpu)
@@ -183,43 +197,54 @@ def train(train_loader, model, criterion, optimizer, epoch, args, tb_writer):
             if tb_writer:
                 for tag, val in zip(tags, values):
                     tb_writer.add_scalar(
-                        tag, val / images.shape[0], epoch * len(train_loader) + i
+                        "train/" + tag,
+                        val / images.shape[0],
+                        epoch * len(train_loader) + i,
                     )
+    print(f"Epoch {epoch} takes {time.time() - t0} seconds")
     return losses.avg
 
 
 def validate(val_loader, model, criterion, epoch, args, tb_writer):
+    t0 = time.time()
     batch_time = AverageMeter("Time", ":6.3f")
     losses = AverageMeter("Loss", ":.4e")
-    precious = AverageMeter("Precious", ":.4e")
-    recall = AverageMeter("Recall", ":.4e")
+    APs = AverageMeter("Average Precious", ":.4%")
+    precious = AverageMeter("Precious", ":.4%")
+    recalls = AverageMeter("Recall", ":.4%")
     progress = ProgressMeter(
-        len(val_loader), [batch_time, losses, precious, recall], "Test: "
+        len(val_loader), [batch_time, losses, APs, precious, recalls], "Test: "
     )
 
     model.eval()
     with torch.no_grad():
         end = time.time()
         for i, (images, target) in enumerate(val_loader):
+            if args.debug and 15 < i:
+                break
             images = images.cuda(args.gpu)
             target = target.cuda(args.gpu)
 
             inf_out, train_out = model(images)
-            loss = criterion(train_out, target, model)
-            prec, rec = accuracy(inf_out, target, args)
+            loss, _, _, _ = criterion(train_out, target, model)
+            ap, prec, rec = accuracy(inf_out, target, args)
             batch_time.update(time.time() - end)
             losses.update(loss.item(), images.size(0))
+            APs.update(ap)
             precious.update(prec)
-            recall.update(rec)
+            recalls.update(rec)
             end = time.time()
 
-            tags = ["total loss", "precious", "recall"]
-            values = [loss / images.shape[0], prec, rec]
+            tags = ["total loss", "Average Precious", "Precious", "Recall"]
+            values = [loss / images.shape[0], ap, prec, rec]
             if i % args.print_freq == 0:
                 progress.display(i)
                 if tb_writer:
                     for tag, value in zip(tags, values):
-                        tb_writer.add_scalar(tag, value, epoch * len(val_loader) + i)
+                        tb_writer.add_scalar(
+                            "test/" + tag, value, epoch * len(val_loader) + i
+                        )
+    print(f"The validation of epoch {epoch} takes {time.time() - t0} seconds")
 
 
 def accuracy(output, target, args):
@@ -228,49 +253,83 @@ def accuracy(output, target, args):
     Args:
         output: a tensor whose shape is num_image * 6, and 6 represent x, y, w, h, obj, cls
         target: a tensor whose shape is num_target * 6, and 5 represent img, cls, x, y, w, h
+    Return:
+        ap: the ap averaged by each image
+        prec: precious averaged by each image
+        rec: recall averaged by each image
     """
     output = non_max_suppression(output, args)
-    TP, FP = 0, 0
     # transform the target to actual image world
     target[:, 2:] *= args.image_size[1]
     target[:, 2:] = xywh2xyxy(target[:, 2:])
     # for every image
+    ap_sum, prec_sum, rec_sum = 0.0, 0.0, 0.0
     for ii, pred in enumerate(output):
+        TP = torch.zeros(pred.shape[0])
+        FP = torch.zeros(pred.shape[0])
         labels = target[target[:, 0] == ii, 1:]
         cls_tensor = labels[:, 0]
+        # add a global index to the pred, i-th prediction
+        pred = torch.cat(
+            (pred, torch.arange(pred.shape[0]).view(-1, 1).to(args.gpu)), dim=-1
+        )
         # for every class in the target
         for cls in torch.unique(cls_tensor, sorted=True):
             # find the corresponding prediction and target box and get the matrix
             ti = labels[:, 0] == cls
             sub_labels = labels[ti]
-            pi = pred[:, -1] == cls
+            pi = pred[:, 5] == cls
             sub_pred = pred[pi]
             if sub_pred.size(0) == 0:
                 continue
-            sub_pred = sub_pred[torch.argsort(sub_pred[:, 4], descending=True)]
             bbox_matrix = box_iou(sub_pred[:, :4], sub_labels[:, 1:])
             # for every prediction, find the largest iou corresponding target, if the iou is more than iou_threshold and the target has not been detected, TP plus one, else FP plus one
             seen = torch.zeros(len(sub_labels), dtype=bool)
             max_iou, target_indexs = torch.max(bbox_matrix, dim=1)
             for i, target_index in enumerate(target_indexs):
+                global_i = int(sub_pred[i, -1])
                 if args.iou_thres < max_iou[i]:
                     if not seen[target_index]:
-                        TP += 1
+                        TP[global_i] = 1
                         seen[target_index] = True
                     else:
-                        FP += 1
+                        FP[global_i] = 1
                 else:
-                    FP += 1
+                    FP[global_i] = 1
 
-    # calculate the matrics
-    npos = target.size(0)
-    if not TP + FP == 0:
-        prec = TP / (TP + FP)
-    else:
-        prec = 0
-    rec = TP / npos
+        # calculate the matrics
+        npos = labels.size(0)
+        acc_TP = torch.cumsum(TP, dim=0)
+        acc_FP = torch.cumsum(FP, dim=0)
+        prec = acc_TP / (acc_TP + acc_FP)
+        rec = acc_TP / npos
+        ap_sum += calculateAP(rec, prec)
+        prec_sum += prec[-1]
+        rec_sum += rec[-1]
 
-    return prec, rec
+    image_num = len(output)
+    return ap_sum / image_num, prec_sum / image_num, rec_sum / image_num
+
+
+def calculateAP(recall, precious):
+    mrec = []
+    mrec.append(0)
+    [mrec.append(e) for e in recall]
+    mrec.append(1)
+    mprec = []
+    mprec.append(0)
+    [mprec.append(e) for e in precious]
+    mprec.append(0)
+    for i in range(len(mprec) - 1, 0, -1):
+        mprec[i - 1] = max(mprec[i], mprec[i - 1])
+    ii = []
+    for i in range(1, len(mrec)):
+        if mrec[i] != mrec[i - 1]:
+            ii.append(i)
+    ap = 0
+    for i in ii:
+        ap += (mrec[i] - mrec[i - 1]) * mprec[i]
+    return ap
 
 
 class AverageMeter(object):

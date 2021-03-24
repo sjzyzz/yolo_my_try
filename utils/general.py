@@ -1,6 +1,7 @@
 import glob
 import os
 import torch
+import torchvision
 import torch.tensor as tensor
 import math
 from pathlib import Path
@@ -174,9 +175,10 @@ def non_max_suppression(prediction, args):
     Args:
         prediction: a tensor with shape of num_image * ?? * 85, and the format of single is cx,cy,w,h,obj,cls(80),and the coordinate is in absolute form
     Return:
-        output: list of tensor with shape of ? * 6, the 6 represent x,y,x,y,conf,cls
+        output: list of tensor with shape of ? * 6, the 6 represent x,y,x,y,conf,cls, and sorted by obj conf
     """
     conf_thres = args.conf_thres
+    max_wh = 4096
     # for every image
     output = [torch.zeros((0, 6), device=prediction.device)] * prediction.size(0)
     for xi, x in enumerate(prediction):
@@ -189,8 +191,12 @@ def non_max_suppression(prediction, args):
         conf, j = x[:, 5:].max(1, keepdim=True)
         x = torch.cat((box, conf, j), 1)
         x = x[conf_thres < x[:, 4]]
-        # TODO: perform a NMS
-
-        output[xi] = x
+        # perform a NMS
+        c = x[:, -1] * max_wh
+        boxes = x[:, :4] + c[:, None]
+        scores = x[:, 4]
+        iou_thres = args.iou_thres
+        i = torchvision.ops.nms(boxes, scores, iou_thres)
+        output[xi] = x[i]
 
     return output
