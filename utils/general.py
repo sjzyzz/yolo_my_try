@@ -200,3 +200,13 @@ def non_max_suppression(prediction, args):
         output[xi] = x[i]
 
     return output
+
+
+def get_lr(optimizer):
+    for param_group in optimizer.param_groups:
+        return param_group["lr"]
+
+
+def one_cycle(y1, y2, steps):
+    return lambda x: ((1 - math.cos(math.pi * x / steps)) / 2) * (y2 - y1) + y1
+

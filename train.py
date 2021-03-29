@@ -1,6 +1,7 @@
 import time
 import torch
 import torch.optim as optim
+from torch.optim.lr_scheduler import LambdaLR
 import torch.backends.cudnn as cudnn
 from pathlib import Path
 from torch.utils.tensorboard import SummaryWriter
@@ -10,6 +11,7 @@ import yaml
 import torch.nn as nn
 import torch.multiprocessing as mp
 import torch.distributed as dist
+import numpy as np
 
 from utils.loss import compute_loss
 from utils.general import (
@@ -18,6 +20,8 @@ from utils.general import (
     box_iou,
     non_max_suppression,
     xywh2xyxy,
+    get_lr,
+    one_cycle,
 )
 from utils.dataset import create_dataset
 from utils.torch_utils import select_device
@@ -25,7 +29,8 @@ from models.yolo import Model, MyDataParallel
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--data", type=str, default="data/coco.yaml")
-parser.add_argument("--batch-size", type=int, default=8)
+parser.add_argument("--hyp", type=str, default="data/hyp.yaml")
+parser.add_argument("--batch-size", type=int, default=12)
 parser.add_argument("--dist-url", type=str, default="tcp://127.0.0.1:23456")
 parser.add_argument(
     "--rank", default=0, type=int, help="node rank for distributed training"
@@ -53,7 +58,7 @@ parser.add_argument(
     help="resume the most recent train",
 )  # if the --resume appear in the command but no argument follows, the const value(True) will be assign, if the --resume does not appear in the command, the default value(False) will be assign------the function of "nargs=?"
 parser.add_argument("--iou-thres", type=float, default=0.5)
-parser.add_argument("--conf-thres", type=float, default=0.001)
+parser.add_argument("--conf-thres", type=float, default=0.01)
 parser.add_argument("--image-size", type=int, nargs="+", default=[640, 640])
 parser.add_argument("--debug", action="store_true")
 
@@ -62,9 +67,9 @@ def main():
     args = parser.parse_args()
     world_size = args.world_size
 
-    debug_flag = args.debug
-    args.debug = False
     if args.resume:
+        debug_flag = args.debug
+        args.debug = False
         ckpt = get_latest_run()
         with open(Path(ckpt).parent.parent / "args.yaml", "r") as f:
             args = argparse.Namespace(**yaml.load(f, Loader=yaml.FullLoader))
@@ -80,10 +85,10 @@ def main():
         )
 
     ngpus = torch.cuda.device_count()
-    if args.multiprocessing_distributed:
-        args.world_size = args.world_size * ngpus
-        print(args)
-        mp.spawn(main_worker, nprocs=ngpus, args=(ngpus, args,))
+    # if args.multiprocessing_distributed:
+    args.world_size = args.world_size * ngpus
+    print(args)
+    mp.spawn(main_worker, nprocs=ngpus, args=(ngpus, args,))
 
 
 def main_worker(gpu, ngpus_per_node, args):
@@ -94,6 +99,8 @@ def main_worker(gpu, ngpus_per_node, args):
     )
     with open(args.data, "r") as f:
         data_dict = yaml.load(f, Loader=yaml.FullLoader)
+    with open(args.hyp, "r") as f:
+        hyp_dict = yaml.load(f, Loader=yaml.FullLoader)
     train_img_dir = data_dict["train_img_dir"]
     train_annotation_file = data_dict["train_annotation_file"]
     val_img_dir = data_dict["val_img_dir"]
@@ -108,6 +115,8 @@ def main_worker(gpu, ngpus_per_node, args):
     if args.rank % ngpus_per_node == 0:
         with open(save_dir / "args.yaml", "w") as f:
             yaml.dump(vars(args), f, sort_keys=False)
+        with open(save_dir / "hyp.yaml", "w") as f:
+            yaml.dump(hyp_dict, f, sort_keys=False)
     # img_size = args.img_size
     batch_size = args.batch_size
     _, train_loader = create_dataset(
@@ -122,10 +131,15 @@ def main_worker(gpu, ngpus_per_node, args):
     args.batch_size = int(args.batch_size / ngpus_per_node)
     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
 
-    optimizer = optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
+    optimizer = optim.SGD(
+        model.parameters(), lr=hyp_dict["lr0"], momentum=hyp_dict["momentum"],
+    )
     best_loss = -1.0
     start_epoch = 0
     max_epoch = 300
+    warmup_epochs = hyp_dict["warmup_epochs"]
+    lf = one_cycle(1, hyp_dict["lrf"], max_epoch)
+    scheduler = LambdaLR(optimizer, lr_lambda=lf)
     if args.resume:
         loc = "cuda:{}".format(args.gpu)
         ckpt = torch.load(args.weights, map_location=loc)
@@ -133,20 +147,28 @@ def main_worker(gpu, ngpus_per_node, args):
         start_epoch = ckpt["epoch"] + 1
         model.load_state_dict(ckpt["model_state_dict"])
         optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+        scheduler.load_state_dict(ckpt["scheduler_state_dict"])
 
     cudnn.benchmark = True
 
     tb_writer = None
     if args.gpu == 0:
         tb_writer = SummaryWriter(args.save_dir)
-    for epoch in range(start_epoch, max_epoch):
-        epoch_loss = train(
-            train_loader, model, compute_loss, optimizer, epoch, args, tb_writer
-        )
-        if 50 < epoch:
-            validate(val_loader, model, compute_loss, epoch, args, tb_writer)
-        if args.debug:
-            return
+    for epoch in range(start_epoch, max_epoch + warmup_epochs):
+        if not args.debug:
+            epoch_loss = train(
+                train_loader,
+                model,
+                compute_loss,
+                optimizer,
+                epoch,
+                args,
+                hyp_dict,
+                tb_writer,
+            )
+        validate(val_loader, model, compute_loss, epoch, args, tb_writer)
+        if not epoch < warmup_epochs:
+            scheduler.step()
         # save the checkpoint at the process 0
         if not args.nosave and args.rank % ngpus_per_node == 0:
             is_best = best_loss == -1.0 or epoch_loss < best_loss
@@ -156,6 +178,7 @@ def main_worker(gpu, ngpus_per_node, args):
                 "epoch": epoch,
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
+                "scheduler_state_dict": scheduler.state_dict(),
                 "best_loss": best_loss,
             }
             torch.save(save_dict, last)
@@ -163,7 +186,7 @@ def main_worker(gpu, ngpus_per_node, args):
                 torch.save(save_dict, best)
 
 
-def train(train_loader, model, criterion, optimizer, epoch, args, tb_writer):
+def train(train_loader, model, criterion, optimizer, epoch, args, hyp_dict, tb_writer):
     t0 = time.time()
     data_time = AverageMeter("Data", ":6.3f")
     batch_time = AverageMeter("Time", ":6.3f")
@@ -177,11 +200,25 @@ def train(train_loader, model, criterion, optimizer, epoch, args, tb_writer):
     for i, (images, target) in enumerate(train_loader):
         if args.debug and 15 < i:
             break
+
         data_time.update(time.time() - end)
         images = images.cuda(args.gpu)
         target = target.cuda(args.gpu)
         pred = model(images)
         loss, lbox, lcls, lobj = criterion(pred, target, model)
+
+        # warm up
+        warmup_epochs = hyp_dict["warmup_epochs"]
+        if epoch < warmup_epochs:
+            nw = warmup_epochs * len(train_loader)
+            ni = i + epoch * len(train_loader)
+            xi = [0, nw]
+            for x in optimizer.param_groups:
+                x["lr"] = np.interp(ni, xi, [0, x["initial_lr"]])
+                x["momentum"] = np.interp(
+                    ni, xi, [hyp_dict["warmup_momentum"], hyp_dict["momentum"]]
+                )
+
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
